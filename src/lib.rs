@@ -1,14 +1,6 @@
-use {
-    nix::{
-        fcntl::OFlag,
-        sys::{
-            mman::{mmap, shm_open, shm_unlink, MapFlags, ProtFlags},
-            stat::Mode,
-        },
-        unistd::ftruncate,
-    },
-    std::num::NonZeroUsize,
-};
+mod shm;
+
+use std::num::NonZeroUsize;
 
 /// # Safety
 ///
@@ -17,7 +9,7 @@ use {
 pub unsafe trait Shareable {}
 
 pub struct Shared<T> {
-    _shm: Option<Shm>,
+    _shm: Option<shm::OwnedShm>,
     handle: *mut T,
 }
 
@@ -41,32 +33,12 @@ where
         #[allow(clippy::let_unit_value)]
         let _ = SizeIsNonZeroI64::<T>::OK;
 
-        let fd = shm_open(
-            name,
-            OFlag::O_RDWR | OFlag::O_CREAT | OFlag::O_EXCL,
-            Mode::S_IRUSR | Mode::S_IWUSR,
-        )
-        .expect("unable to create shared memory object");
-        let shm = Shm(String::from(name));
+        let shm = shm::create(name, unsafe {
+            NonZeroUsize::new_unchecked(std::mem::size_of::<T>())
+        })
+        .expect("unable to create shm");
 
-        ftruncate(&fd, i64::try_from(std::mem::size_of::<T>()).unwrap())
-            .expect("unable to resize shared memory");
-        // TODO: null pointer check
-        // TODO: verify alignment
-        let handle = unsafe {
-            mmap(
-                None,
-                NonZeroUsize::new_unchecked(std::mem::size_of::<T>()),
-                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-                MapFlags::MAP_SHARED,
-                Some(&fd),
-                0,
-            )
-            .expect("mmap failure")
-        }
-        .cast::<T>();
-
-        // TODO: initialize before mapping
+        let handle = shm.ptr.cast::<T>();
         unsafe { handle.write(Default::default()) };
 
         println!("create handle @ {handle:X?}");
@@ -84,37 +56,17 @@ where
         #[allow(clippy::let_unit_value)]
         let _ = SizeIsNonZeroI64::<T>::OK;
 
-        let fd = shm_open(name, OFlag::O_RDWR, Mode::S_IRUSR | Mode::S_IWUSR)
-            .expect("unable to open shared memory object");
-
+        let shm = shm::open(name, unsafe {
+            NonZeroUsize::new_unchecked(std::mem::size_of::<T>())
+        })
+        .expect("unable to open shm");
         // TODO: null pointer check
         // TODO: verify alignment
-        let handle = unsafe {
-            mmap(
-                None,
-                NonZeroUsize::new_unchecked(std::mem::size_of::<T>()),
-                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-                MapFlags::MAP_SHARED,
-                Some(&fd),
-                0,
-            )
-            .expect("mmap failure")
-        }
-        .cast::<T>();
 
-        println!("open handle @ {handle:X?}");
-
-        Ok(Self { _shm: None, handle })
-    }
-}
-
-struct Shm(String);
-
-impl Drop for Shm {
-    fn drop(&mut self) {
-        if let Err(e) = shm_unlink(self.0.as_str()) {
-            eprintln!("error unlinking shared memory: {e}");
-        }
+        Ok(Self {
+            _shm: None,
+            handle: shm.ptr.cast::<T>(),
+        })
     }
 }
 

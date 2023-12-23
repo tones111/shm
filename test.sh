@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 
-target/debug/server&
+VER=debug
+#VER=release
+
+target/${VER}/server&
 sleep 1
-target/debug/client&
-target/debug/client&
-target/debug/client&
-target/debug/client&
-target/debug/client&
+target/${VER}/client&
+target/${VER}/client&
+target/${VER}/client&
+target/${VER}/client&
+target/${VER}/client&
