@@ -14,7 +14,7 @@ pub struct Mutex<T> {
 
 #[must_use = "if unused the Mutex will immediately unlock"]
 pub struct MutexGuard<'a, T> {
-    mutex: &'a Mutex<T>,
+    pub(crate) mutex: &'a Mutex<T>,
 }
 
 impl<T> Deref for MutexGuard<'_, T> {

@@ -1,5 +1,7 @@
+mod condvar;
+pub use condvar::Condvar;
 mod futex;
-pub mod mutex;
+mod mutex;
 pub use mutex::Mutex;
 mod shm;
 
