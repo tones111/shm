@@ -5,7 +5,7 @@ mod mutex;
 pub use mutex::Mutex;
 mod shm;
 
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 
 /// # Safety
 ///
@@ -18,7 +18,7 @@ pub struct Shared<T> {
     handle: *mut T,
 }
 
-impl<T> std::ops::Deref for Shared<T> {
+impl<T> core::ops::Deref for Shared<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -39,14 +39,12 @@ where
         let _ = SizeIsNonZeroI64::<T>::OK;
 
         let shm = shm::create(name, unsafe {
-            NonZeroUsize::new_unchecked(std::mem::size_of::<T>())
+            NonZeroUsize::new_unchecked(core::mem::size_of::<T>())
         })
         .expect("unable to create shm");
 
         let handle = shm.ptr.cast::<T>();
         unsafe { handle.write(Default::default()) };
-
-        println!("create handle @ {handle:X?}");
 
         Ok(Self {
             _shm: Some(shm),
@@ -62,7 +60,7 @@ where
         let _ = SizeIsNonZeroI64::<T>::OK;
 
         let shm = shm::open(name, unsafe {
-            NonZeroUsize::new_unchecked(std::mem::size_of::<T>())
+            NonZeroUsize::new_unchecked(core::mem::size_of::<T>())
         })
         .expect("unable to open shm");
         // TODO: null pointer check
@@ -75,10 +73,10 @@ where
     }
 }
 
-pub(crate) struct SizeIsNonZeroI64<T>(std::marker::PhantomData<T>);
+pub(crate) struct SizeIsNonZeroI64<T>(core::marker::PhantomData<T>);
 impl<T> SizeIsNonZeroI64<T> {
     pub(crate) const OK: () = assert!(
-        std::mem::size_of::<T>() > 0 && std::mem::size_of::<T>() <= i64::MAX as usize,
+        core::mem::size_of::<T>() > 0 && core::mem::size_of::<T>() <= i64::MAX as usize,
         "zero-sized types are not supported"
     );
 }

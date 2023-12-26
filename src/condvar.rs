@@ -1,6 +1,6 @@
 use {
     crate::mutex::MutexGuard,
-    std::sync::atomic::{AtomicU32, AtomicUsize, Ordering},
+    core::sync::atomic::{AtomicU32, AtomicUsize, Ordering},
 };
 
 pub struct Condvar {

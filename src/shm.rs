@@ -1,4 +1,5 @@
 use {
+    core::num::NonZeroUsize,
     nix::{
         fcntl::OFlag,
         sys::{
@@ -7,7 +8,6 @@ use {
         },
         unistd::ftruncate,
     },
-    std::num::NonZeroUsize,
 };
 
 #[derive(Debug)]

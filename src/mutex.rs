@@ -1,4 +1,4 @@
-use std::{
+use core::{
     cell::UnsafeCell,
     ops::{Deref, DerefMut},
     sync::atomic::{AtomicU32, Ordering},
@@ -52,8 +52,8 @@ impl<T: Default> Default for Mutex<T> {
     }
 }
 
-impl<T: std::fmt::Debug> std::fmt::Debug for Mutex<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T: core::fmt::Debug> core::fmt::Debug for Mutex<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut d = f.debug_struct("Mutex");
         match self.try_lock() {
             Some(guard) => {
@@ -107,7 +107,7 @@ impl<T> Mutex<T> {
         let mut spin_count = 100;
 
         while self.state.load(Ordering::Relaxed) == 1 && spin_count > 0 {
-            std::hint::spin_loop();
+            core::hint::spin_loop();
             spin_count -= 1;
         }
 
