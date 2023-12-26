@@ -1,3 +1,6 @@
+mod futex;
+pub mod mutex;
+pub use mutex::Mutex;
 mod shm;
 
 use std::num::NonZeroUsize;
