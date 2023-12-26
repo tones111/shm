@@ -1,7 +1,10 @@
 use core::{
     cell::UnsafeCell,
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::{
+        AtomicU32,
+        Ordering::{Acquire, Relaxed, Release},
+    },
 };
 
 pub struct Mutex<T> {
@@ -37,7 +40,7 @@ impl<T> DerefMut for MutexGuard<'_, T> {
 impl<T> Drop for MutexGuard<'_, T> {
     #[inline]
     fn drop(&mut self) {
-        if self.mutex.state.swap(0, Ordering::Release) == 2 {
+        if self.mutex.state.swap(0, Release) == 2 {
             crate::futex::wake_one(&self.mutex.state);
         }
     }
@@ -79,18 +82,14 @@ impl<T> Mutex<T> {
     #[inline]
     pub fn try_lock(&self) -> Option<MutexGuard<T>> {
         self.state
-            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange(0, 1, Acquire, Relaxed)
             .map(|_| MutexGuard { mutex: self })
             .ok()
     }
 
     #[inline]
     pub fn lock(&self) -> MutexGuard<T> {
-        if self
-            .state
-            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
+        if self.state.compare_exchange(0, 1, Acquire, Relaxed).is_err() {
             // The lock was already locked
             self.lock_contended();
         }
@@ -106,20 +105,16 @@ impl<T> Mutex<T> {
     fn lock_contended(&self) {
         let mut spin_count = 100;
 
-        while self.state.load(Ordering::Relaxed) == 1 && spin_count > 0 {
+        while self.state.load(Relaxed) == 1 && spin_count > 0 {
             core::hint::spin_loop();
             spin_count -= 1;
         }
 
-        if self
-            .state
-            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
+        if self.state.compare_exchange(0, 1, Acquire, Relaxed).is_ok() {
             return;
         }
 
-        while self.state.swap(2, Ordering::Acquire) != 0 {
+        while self.state.swap(2, Acquire) != 0 {
             crate::futex::wait(&self.state, 2);
         }
     }

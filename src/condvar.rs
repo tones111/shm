@@ -1,6 +1,6 @@
 use {
     crate::mutex::MutexGuard,
-    core::sync::atomic::{AtomicU32, AtomicUsize, Ordering},
+    core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::Relaxed},
 };
 
 pub struct Condvar {
@@ -23,8 +23,8 @@ impl Condvar {
     }
 
     pub fn wait<'a, T>(&self, guard: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
-        self.num_waiters.fetch_add(1, Ordering::Relaxed);
-        let counter_value = self.counter.load(Ordering::Relaxed);
+        self.num_waiters.fetch_add(1, Relaxed);
+        let counter_value = self.counter.load(Relaxed);
 
         // Unlock the mutex by dropping the guard, but remember the mutex so we can lock it again later.
         let mutex = guard.mutex;
@@ -32,21 +32,21 @@ impl Condvar {
 
         // Wait, but only if the counter hasn't changed since unlocking.
         crate::futex::wait(&self.counter, counter_value);
-        self.num_waiters.fetch_sub(1, Ordering::Relaxed);
+        self.num_waiters.fetch_sub(1, Relaxed);
 
         mutex.lock()
     }
 
     pub fn notify_one(&self) {
-        if self.num_waiters.load(Ordering::Relaxed) > 0 {
-            self.counter.fetch_add(1, Ordering::Relaxed);
+        if self.num_waiters.load(Relaxed) > 0 {
+            self.counter.fetch_add(1, Relaxed);
             crate::futex::wake_one(&self.counter);
         }
     }
 
     pub fn notify_all(&self) {
-        if self.num_waiters.load(Ordering::Relaxed) > 0 {
-            self.counter.fetch_add(1, Ordering::Relaxed);
+        if self.num_waiters.load(Relaxed) > 0 {
+            self.counter.fetch_add(1, Relaxed);
             crate::futex::wake_all(&self.counter);
         }
     }
