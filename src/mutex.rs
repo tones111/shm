@@ -46,8 +46,7 @@ impl<T> Drop for MutexGuard<'_, T> {
     }
 }
 
-// Note: This Mutex is meant to be accessed via a shared memory region.
-//unsafe impl<T> Sync for Mutex<T> where T: Send {}
+unsafe impl<T> Sync for Mutex<T> where T: Send {}
 
 impl<T: Default> Default for Mutex<T> {
     fn default() -> Self {
