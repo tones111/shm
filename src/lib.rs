@@ -3,6 +3,8 @@ pub use condvar::Condvar;
 mod futex;
 mod mutex;
 pub use mutex::Mutex;
+mod rwlock;
+pub use rwlock::RwLock;
 mod shm;
 
 use core::num::NonZeroUsize;
