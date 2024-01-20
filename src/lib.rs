@@ -64,10 +64,10 @@ where
         #[allow(clippy::let_unit_value)]
         let _ = SizeIsNonZeroI64::<T>::OK;
 
-        let shm = shm::open(name, NonZeroUsize::new(core::mem::size_of::<T>()).unwrap())
-            .expect("unable to open shm");
+        let shm = shm::open(name).expect("unable to open shm");
         // TODO: null pointer check
         // TODO: verify alignment
+        // TODO: verify len
 
         Ok(Self {
             handle: shm.ptr.cast::<T>(),

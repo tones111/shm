@@ -7,6 +7,7 @@ use std::{
 #[derive(Debug)]
 pub(crate) enum Error {
     InvalidLen,
+    UnknownLen(std::io::Error),
     Open(std::io::Error),
     Truncate(std::io::Error),
     Mmap(std::io::Error),
@@ -42,7 +43,7 @@ pub fn create(name: &CStr, len: NonZeroUsize) -> Result<OwnedShm, Error> {
     }
 }
 
-pub fn open(name: &CStr, len: NonZeroUsize) -> Result<OpenShm, Error> {
+pub fn open(name: &CStr) -> Result<OpenShm, Error> {
     let fd =
         match unsafe { libc::shm_open(name.as_ptr(), libc::O_RDWR, libc::S_IRUSR | libc::S_IWUSR) }
         {
@@ -50,10 +51,20 @@ pub fn open(name: &CStr, len: NonZeroUsize) -> Result<OpenShm, Error> {
             _ => Err(Error::Open(std::io::Error::last_os_error()))?,
         };
 
+    let len = usize::try_from({
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        if unsafe { libc::fstat(fd.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
+            Err(Error::UnknownLen(std::io::Error::last_os_error()))?
+        } else {
+            unsafe { stat.assume_init() }.st_size
+        }
+    })
+    .map_err(|_| Error::InvalidLen)?;
+
     match unsafe {
         libc::mmap(
             std::ptr::null_mut(),
-            len.get(),
+            len,
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_SHARED,
             fd.as_raw_fd(),
@@ -61,10 +72,7 @@ pub fn open(name: &CStr, len: NonZeroUsize) -> Result<OpenShm, Error> {
         )
     } {
         libc::MAP_FAILED => Err(Error::Mmap(std::io::Error::last_os_error()))?,
-        ptr => Ok(OpenShm {
-            ptr,
-            len: len.get(),
-        }),
+        ptr => Ok(OpenShm { ptr, len }),
     }
 }
 
