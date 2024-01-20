@@ -53,34 +53,38 @@ impl Condvar {
     }
 }
 
-#[test]
-fn test_condvar() {
-    use {
-        crate::mutex::Mutex,
-        std::{thread, time::Duration},
-    };
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_condvar() {
+        use {
+            super::*,
+            crate::mutex::Mutex,
+            std::{thread, time::Duration},
+        };
 
-    let mutex = Mutex::default();
-    let condvar = Condvar::default();
+        let mutex = Mutex::default();
+        let condvar = Condvar::default();
 
-    let mut wakeups = 0;
-    thread::scope(|s| {
-        s.spawn(|| {
-            thread::sleep(Duration::from_secs(1));
-            *mutex.lock() = 123;
-            condvar.notify_one();
+        let mut wakeups = 0;
+        thread::scope(|s| {
+            s.spawn(|| {
+                thread::sleep(Duration::from_secs(1));
+                *mutex.lock() = 123;
+                condvar.notify_one();
+            });
+
+            let mut m = mutex.lock();
+            while *m < 100 {
+                m = condvar.wait(m);
+                wakeups += 1;
+            }
+
+            assert_eq!(*m, 123);
         });
 
-        let mut m = mutex.lock();
-        while *m < 100 {
-            m = condvar.wait(m);
-            wakeups += 1;
-        }
-
-        assert_eq!(*m, 123);
-    });
-
-    // Check that the main thread actually did wait (not busy-loop),
-    // while still allowing for a few spurious wake ups.
-    assert!(wakeups < 10);
+        // Check that the main thread actually did wait (not busy-loop),
+        // while still allowing for a few spurious wake ups.
+        assert!(wakeups < 10);
+    }
 }
