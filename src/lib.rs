@@ -15,11 +15,15 @@ use std::{ffi::CStr, num::NonZeroUsize};
 /// Examples of such invalid types include Box, String, Vec (or anything in std::collections), etc.
 pub unsafe trait Shareable {}
 
+enum Shm {
+    Owned(shm::OwnedShm),
+    Open(shm::OpenShm),
+}
+
 pub struct Shared<T> {
-    // TODO: Yuck
-    _shm: Option<shm::OwnedShm>,
-    _shm2: Option<shm::OpenShm>,
+    // Note: This ordering ensures the handle drops before the shared memory region
     handle: *mut T,
+    _shm: Shm,
 }
 
 impl<T> core::ops::Deref for Shared<T> {
@@ -48,18 +52,20 @@ where
         .expect("unable to create shm");
 
         let handle = shm.shm.ptr.cast::<T>();
+        // TODO: null pointer check
+        // TODO: verify alignment
+        // TODO: verify len?
         unsafe { handle.write(Default::default()) };
 
         Ok(Self {
-            _shm: Some(shm),
-            _shm2: None,
             handle,
+            _shm: Shm::Owned(shm),
         })
     }
 
     /// # Safety
     ///
-    ///  The type T must match the type used to create the Shared<T> instance of the same name
+    ///  The type T must match the type used to create the Shared<T> instance with the same name
     pub unsafe fn open(name: &CStr) -> Result<Self, ()> {
         #[allow(clippy::let_unit_value)]
         let _ = SizeIsNonZeroI64::<T>::OK;
@@ -71,8 +77,7 @@ where
 
         Ok(Self {
             handle: shm.ptr.cast::<T>(),
-            _shm: None,
-            _shm2: Some(shm),
+            _shm: Shm::Open(shm),
         })
     }
 }
