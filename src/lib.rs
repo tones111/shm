@@ -47,7 +47,7 @@ where
         })
         .expect("unable to create shm");
 
-        let handle = shm.ptr.cast::<T>();
+        let handle = shm.shm.ptr.cast::<T>();
         unsafe { handle.write(Default::default()) };
 
         Ok(Self {
