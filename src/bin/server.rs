@@ -1,4 +1,4 @@
-use {shm::Mutex, std::ops::Deref};
+use {shm::Mutex, std::ffi::CString, std::ops::Deref};
 
 #[derive(Default, Debug)]
 struct Data {
@@ -9,9 +9,9 @@ struct Data {
 unsafe impl shm::Shareable for Data {}
 
 fn main() {
-    const SHM_NAME: &str = "/demo_123";
+    let shm_name: CString = CString::new("/demo_123").unwrap();
 
-    let data: shm::Shared<Data> = shm::Shared::create(SHM_NAME).unwrap();
+    let data: shm::Shared<Data> = shm::Shared::create(&shm_name).unwrap();
     println!("server [init]: {:?}", data.deref());
 
     for _ in 0..1_000_000 {

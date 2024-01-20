@@ -7,7 +7,7 @@ mod rwlock;
 pub use rwlock::RwLock;
 mod shm;
 
-use core::num::NonZeroUsize;
+use std::{ffi::CStr, num::NonZeroUsize};
 
 /// # Safety
 ///
@@ -16,7 +16,9 @@ use core::num::NonZeroUsize;
 pub unsafe trait Shareable {}
 
 pub struct Shared<T> {
+    // TODO: Yuck
     _shm: Option<shm::OwnedShm>,
+    _shm2: Option<shm::OpenShm>,
     handle: *mut T,
 }
 
@@ -36,7 +38,7 @@ where
     T: Default + Shareable,
 {
     // TODO: error handling
-    pub fn create(name: &str) -> Result<Self, ()> {
+    pub fn create(name: &CStr) -> Result<Self, ()> {
         #[allow(clippy::let_unit_value)]
         let _ = SizeIsNonZeroI64::<T>::OK;
 
@@ -50,6 +52,7 @@ where
 
         Ok(Self {
             _shm: Some(shm),
+            _shm2: None,
             handle,
         })
     }
@@ -57,20 +60,19 @@ where
     /// # Safety
     ///
     ///  The type T must match the type used to create the Shared<T> instance of the same name
-    pub unsafe fn open(name: &str) -> Result<Self, ()> {
+    pub unsafe fn open(name: &CStr) -> Result<Self, ()> {
         #[allow(clippy::let_unit_value)]
         let _ = SizeIsNonZeroI64::<T>::OK;
 
-        let shm = shm::open(name, unsafe {
-            NonZeroUsize::new_unchecked(core::mem::size_of::<T>())
-        })
-        .expect("unable to open shm");
+        let shm = shm::open(name, NonZeroUsize::new(core::mem::size_of::<T>()).unwrap())
+            .expect("unable to open shm");
         // TODO: null pointer check
         // TODO: verify alignment
 
         Ok(Self {
-            _shm: None,
             handle: shm.ptr.cast::<T>(),
+            _shm: None,
+            _shm2: Some(shm),
         })
     }
 }

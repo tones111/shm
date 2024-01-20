@@ -1,96 +1,108 @@
-use {
-    core::num::NonZeroUsize,
-    nix::{
-        fcntl::OFlag,
-        sys::{
-            mman::{mmap, munmap, shm_open, shm_unlink, MapFlags, ProtFlags},
-            stat::Mode,
-        },
-        unistd::ftruncate,
-    },
+use std::{
+    ffi::{CStr, CString},
+    num::NonZeroUsize,
+    os::fd::{AsRawFd, FromRawFd, OwnedFd},
 };
 
 #[derive(Debug)]
-pub(crate) enum ShmError {
-    Open(Box<dyn std::error::Error>),
-    Truncate(Box<dyn std::error::Error>),
-    Mmap(Box<dyn std::error::Error>),
+pub(crate) enum Error {
+    Open(std::io::Error),
+    Truncate(std::io::Error),
+    Mmap(std::io::Error),
 }
 
-pub fn create(name: &str, len: NonZeroUsize) -> Result<OwnedShm, ShmError> {
+pub fn create(name: &CStr, len: NonZeroUsize) -> Result<OwnedShm, Error> {
+    let trunc_len = i64::try_from(len.get()).unwrap();
+
     let unlink = || {
-        let _ = shm_unlink(name);
+        let _ = unsafe { libc::shm_unlink(name.as_ptr()) };
     };
 
-    let fd = shm_open(
-        name,
-        OFlag::O_RDWR | OFlag::O_CREAT | OFlag::O_EXCL,
-        Mode::S_IRUSR | Mode::S_IWUSR,
-    )
-    .map_err(|e| ShmError::Open(Box::new(e)))?;
+    let fd = match unsafe {
+        libc::shm_open(
+            name.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
+            libc::S_IRUSR | libc::S_IWUSR,
+        )
+    } {
+        fd if fd >= 0 => unsafe { OwnedFd::from_raw_fd(fd) },
+        _ => Err(Error::Open(std::io::Error::last_os_error()))?,
+    };
 
-    ftruncate(&fd, i64::try_from(len.get()).unwrap()).map_err(|e| {
+    if unsafe { libc::ftruncate(fd.as_raw_fd(), trunc_len) } != 0 {
+        let err = std::io::Error::last_os_error();
         unlink();
-        ShmError::Truncate(Box::new(e))
-    })?;
+        Err(Error::Truncate(err))?
+    };
 
-    let mem = unsafe {
-        mmap(
-            None,
-            len,
-            ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-            MapFlags::MAP_SHARED,
-            Some(&fd),
+    match unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            len.get(),
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            fd.as_raw_fd(),
             0,
         )
-        .map_err(|e| {
+    } {
+        libc::MAP_FAILED => {
+            let err = std::io::Error::last_os_error();
             unlink();
-            ShmError::Mmap(Box::new(e))
-        })?
-    };
-
-    Ok(OwnedShm {
-        name: String::from(name).into_boxed_str(),
-        ptr: mem,
-        len: len.get(),
-    })
+            Err(Error::Mmap(err))?
+        }
+        ptr => Ok(OwnedShm {
+            name: CString::from(name).into_boxed_c_str(),
+            ptr,
+            len: len.get(),
+        }),
+    }
 }
 
-pub fn open(name: &str, len: NonZeroUsize) -> Result<OpenShm, ShmError> {
-    let fd = shm_open(name, OFlag::O_RDWR, Mode::S_IRUSR | Mode::S_IWUSR)
-        .map_err(|e| ShmError::Open(Box::new(e)))?;
-
-    let mem = unsafe {
-        mmap(
-            None,
-            len,
-            ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-            MapFlags::MAP_SHARED,
-            Some(&fd),
-            0,
-        )
-        .map_err(|e| ShmError::Mmap(Box::new(e)))?
+pub fn open(name: &CStr, len: NonZeroUsize) -> Result<OpenShm, Error> {
+    let unlink = || {
+        let _ = unsafe { libc::shm_unlink(name.as_ptr()) };
     };
 
-    Ok(OpenShm {
-        ptr: mem,
-        len: len.get(),
-    })
+    let fd =
+        match unsafe { libc::shm_open(name.as_ptr(), libc::O_RDWR, libc::S_IRUSR | libc::S_IWUSR) }
+        {
+            fd if fd >= 0 => unsafe { OwnedFd::from_raw_fd(fd) },
+            _ => Err(Error::Open(std::io::Error::last_os_error()))?,
+        };
+
+    match unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            len.get(),
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            fd.as_raw_fd(),
+            0,
+        )
+    } {
+        libc::MAP_FAILED => {
+            let err = std::io::Error::last_os_error();
+            unlink();
+            Err(Error::Mmap(err))?
+        }
+        ptr => Ok(OpenShm {
+            ptr,
+            len: len.get(),
+        }),
+    }
 }
 
 pub(crate) struct OwnedShm {
-    name: Box<str>,
+    name: Box<CStr>,
     pub ptr: *mut std::ffi::c_void,
     pub len: usize,
 }
 
 impl Drop for OwnedShm {
     fn drop(&mut self) {
-        if let Err(e) = unsafe { munmap(self.ptr, self.len) } {
-            eprintln!("error unmapping shared memory: {e}");
-        }
-        if let Err(e) = shm_unlink(&*self.name) {
-            eprintln!("error unlinking shared memory: {e}");
+        unsafe {
+            libc::munmap(self.ptr, self.len);
+            libc::shm_unlink(self.name.as_ptr());
         }
     }
 }
@@ -98,4 +110,13 @@ impl Drop for OwnedShm {
 pub(crate) struct OpenShm {
     pub ptr: *mut std::ffi::c_void,
     pub len: usize,
+}
+
+impl Drop for OpenShm {
+    fn drop(&mut self) {
+        unsafe {
+            libc::msync(self.ptr, self.len, libc::MS_SYNC);
+            libc::munmap(self.ptr, self.len);
+        }
+    }
 }
