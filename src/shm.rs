@@ -1,5 +1,6 @@
 use std::{
     ffi::{CStr, CString},
+    mem::MaybeUninit,
     num::NonZeroUsize,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
 };
@@ -16,11 +17,11 @@ pub(crate) enum Error {
 pub fn create(name: &CStr, len: NonZeroUsize) -> Result<OwnedShm, Error> {
     let trunc_len = i64::try_from(len.get()).map_err(|_| Error::InvalidLen)?;
 
-    let shm = ShmFd::create(name).map_err(Error::Open)?;
+    let shm_fd = ShmFd::create(name).map_err(Error::Open)?;
 
-    if unsafe { libc::ftruncate(shm.fd.as_raw_fd(), trunc_len) } != 0 {
+    if unsafe { libc::ftruncate(shm_fd.fd.as_raw_fd(), trunc_len) } != 0 {
         Err(Error::Truncate(std::io::Error::last_os_error()))?
-    };
+    }
 
     match unsafe {
         libc::mmap(
@@ -28,13 +29,13 @@ pub fn create(name: &CStr, len: NonZeroUsize) -> Result<OwnedShm, Error> {
             len.get(),
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_SHARED,
-            shm.fd.as_raw_fd(),
+            shm_fd.fd.as_raw_fd(),
             0,
         )
     } {
         libc::MAP_FAILED => Err(Error::Mmap(std::io::Error::last_os_error()))?,
         ptr => Ok(OwnedShm {
-            _fd: shm,
+            _fd: shm_fd,
             shm: OpenShm {
                 ptr,
                 len: len.get(),
@@ -52,11 +53,10 @@ pub fn open(name: &CStr) -> Result<OpenShm, Error> {
         };
 
     let len = usize::try_from({
-        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-        if unsafe { libc::fstat(fd.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
-            Err(Error::UnknownLen(std::io::Error::last_os_error()))?
-        } else {
-            unsafe { stat.assume_init() }.st_size
+        let mut stat = MaybeUninit::<libc::stat>::uninit();
+        match unsafe { libc::fstat(fd.as_raw_fd(), stat.as_mut_ptr()) } {
+            0 => unsafe { stat.assume_init() }.st_size,
+            _ => Err(Error::UnknownLen(std::io::Error::last_os_error()))?,
         }
     })
     .map_err(|_| Error::InvalidLen)?;
@@ -112,11 +112,11 @@ impl ShmFd {
                 libc::S_IRUSR | libc::S_IWUSR,
             )
         } {
-            fd if fd < 0 => Err(std::io::Error::last_os_error()),
-            fd => Ok(Self {
+            fd if fd >= 0 => Ok(Self {
                 name: CString::from(name).into_boxed_c_str(),
                 fd: unsafe { OwnedFd::from_raw_fd(fd) },
             }),
+            _ => Err(std::io::Error::last_os_error()),
         }
     }
 }
