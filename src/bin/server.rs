@@ -11,7 +11,7 @@ unsafe impl shm::Shareable for Data {}
 fn main() {
     let shm_name: CString = CString::new("/demo_123").unwrap();
 
-    let data: shm::Shared<Data> = shm::Shared::create(&shm_name).unwrap();
+    let data: shm::Shared<Data> = unsafe { shm::Shared::create(&shm_name).unwrap() };
     println!("server [init]: {:?}", data.deref());
 
     for _ in 0..1_000_000 {

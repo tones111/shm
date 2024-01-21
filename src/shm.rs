@@ -33,7 +33,9 @@ pub fn create(name: &CStr, len: NonZeroUsize) -> Result<OwnedShm, Error> {
             0,
         )
     } {
-        libc::MAP_FAILED => Err(Error::Mmap(std::io::Error::last_os_error()))?,
+        ptr if ptr == libc::MAP_FAILED || ptr.is_null() => {
+            Err(Error::Mmap(std::io::Error::last_os_error()))?
+        }
         ptr => Ok(OwnedShm {
             _fd: shm_fd,
             shm: OpenShm {
@@ -71,7 +73,9 @@ pub fn open(name: &CStr) -> Result<OpenShm, Error> {
             0,
         )
     } {
-        libc::MAP_FAILED => Err(Error::Mmap(std::io::Error::last_os_error()))?,
+        ptr if ptr == libc::MAP_FAILED || ptr.is_null() => {
+            Err(Error::Mmap(std::io::Error::last_os_error()))?
+        }
         ptr => Ok(OpenShm { ptr, len }),
     }
 }
@@ -91,9 +95,18 @@ pub(crate) struct OpenShm {
 
 impl Drop for OpenShm {
     fn drop(&mut self) {
+        let _ = self.sync();
         unsafe {
-            libc::msync(self.ptr, self.len, libc::MS_SYNC);
             libc::munmap(self.ptr, self.len);
+        }
+    }
+}
+
+impl OpenShm {
+    pub(crate) fn sync(&mut self) -> Result<(), std::io::Error> {
+        match unsafe { libc::msync(self.ptr, self.len, libc::MS_SYNC) } {
+            0 => Ok(()),
+            _ => Err(std::io::Error::last_os_error()),
         }
     }
 }
