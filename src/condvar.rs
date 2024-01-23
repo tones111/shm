@@ -3,8 +3,19 @@
 
 use {
     crate::mutex::MutexGuard,
-    core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::Relaxed},
+    core::{
+        sync::atomic::{AtomicU32, AtomicUsize, Ordering::Relaxed},
+        time::Duration,
+    },
 };
+
+pub struct WaitTimeoutResult(bool);
+
+impl WaitTimeoutResult {
+    pub fn timed_out(&self) -> bool {
+        self.0
+    }
+}
 
 pub struct Condvar {
     counter: AtomicU32,
@@ -36,6 +47,24 @@ impl Condvar {
         self.num_waiters.fetch_sub(1, Relaxed);
 
         mutex.lock()
+    }
+
+    // TODO: add a test
+    pub fn wait_timeout<'a, T>(
+        &self,
+        guard: MutexGuard<'a, T>,
+        dur: Duration,
+    ) -> (MutexGuard<'a, T>, WaitTimeoutResult) {
+        self.num_waiters.fetch_add(1, Relaxed);
+        let counter_value = self.counter.load(Relaxed);
+
+        let mutex = guard.mutex;
+        drop(guard);
+
+        let success = crate::futex::wait_timeout(&self.counter, counter_value, dur);
+        self.num_waiters.fetch_sub(1, Relaxed);
+
+        (mutex.lock(), WaitTimeoutResult(!success))
     }
 
     pub fn notify_one(&self) {
