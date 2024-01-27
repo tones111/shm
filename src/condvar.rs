@@ -61,7 +61,7 @@ impl Condvar {
         let mutex = guard.mutex;
         drop(guard);
 
-        let success = crate::futex::wait_timeout(&self.counter, counter_value, dur);
+        let success = crate::futex::wait_timeout(&self.counter, counter_value, Some(dur));
         self.num_waiters.fetch_sub(1, Relaxed);
 
         (mutex.lock(), WaitTimeoutResult(!success))

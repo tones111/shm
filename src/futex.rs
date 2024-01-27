@@ -9,21 +9,12 @@ use core::{mem::MaybeUninit, sync::atomic::AtomicU32, time::Duration};
 #[cfg(target_os = "linux")]
 #[inline]
 pub(crate) fn wait(a: &AtomicU32, expected: u32) {
-    unsafe {
-        libc::syscall(
-            libc::SYS_futex,
-            a,
-            libc::FUTEX_WAIT,
-            expected,
-            core::ptr::null::<libc::timespec>(),
-        );
-    };
+    wait_timeout(a, expected, None);
 }
 
 #[cfg(target_os = "linux")]
-#[inline]
 // Returns false if wait timed out
-pub(crate) fn wait_timeout(a: &AtomicU32, expected: u32, timeout: Duration) -> bool {
+pub(crate) fn wait_timeout(a: &AtomicU32, expected: u32, timeout: Option<Duration>) -> bool {
     let ts = {
         fn add(ts: libc::timespec, dur: Duration) -> Option<libc::timespec> {
             const NSEC_PER_SEC: i64 = 1_000_000_000;
@@ -41,10 +32,18 @@ pub(crate) fn wait_timeout(a: &AtomicU32, expected: u32, timeout: Duration) -> b
             })
         }
 
-        let mut ts = MaybeUninit::uninit();
-        (unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) } == 0)
-            .then(|| unsafe { ts.assume_init() })
-            .and_then(|ts| add(ts, timeout))
+        // NOTE: overflow is rounded up to an infinite duration
+        timeout.and_then(|to| {
+            let mut ts = MaybeUninit::uninit();
+            (unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) } == 0)
+                .then(|| unsafe { ts.assume_init() })
+                .and_then(|ts| add(ts, to))
+        })
+    };
+
+    let tsp = match ts {
+        Some(ref ts) => ts,
+        None => core::ptr::null(),
     };
 
     loop {
@@ -54,8 +53,7 @@ pub(crate) fn wait_timeout(a: &AtomicU32, expected: u32, timeout: Duration) -> b
                 a,
                 libc::FUTEX_WAIT_BITSET,
                 expected,
-                ts.as_ref()
-                    .map_or(core::ptr::null::<libc::timespec>(), |ts| ts),
+                tsp,
                 core::ptr::null::<u32>(),
                 libc::FUTEX_BITSET_MATCH_ANY,
             )
@@ -182,7 +180,7 @@ mod tests {
                 {
                     // wait_timeout shouldn't block when the expected value differs
                     let timer = Instant::now();
-                    wait_timeout(&fut, 1, Duration::from_secs(1));
+                    wait_timeout(&fut, 1, Some(Duration::from_secs(1)));
                     let elapsed = timer.elapsed();
                     if elapsed > Duration::from_millis(5) {
                         panic!("{elapsed:?} exceeds threshold");
@@ -193,7 +191,7 @@ mod tests {
                     // wait_timeout should block when the expected value is the same
                     fut.store(1, Relaxed);
                     let timer = Instant::now();
-                    wait_timeout(&fut, 1, Duration::from_secs(1));
+                    wait_timeout(&fut, 1, Some(Duration::from_secs(1)));
                     let elapsed = timer.elapsed();
                     if elapsed < Duration::from_millis(10) {
                         panic!("{elapsed:?} exceeds threshold");
@@ -205,7 +203,7 @@ mod tests {
                     // wait_timeout should return once the timeout expires
                     const TIMEOUT: Duration = Duration::from_millis(10);
                     let timer = Instant::now();
-                    wait_timeout(&fut, 2, TIMEOUT);
+                    wait_timeout(&fut, 2, Some(TIMEOUT));
                     let elapsed = timer.elapsed();
                     if elapsed < TIMEOUT {
                         panic!("{elapsed:?} exceeds threshold");
@@ -216,7 +214,7 @@ mod tests {
                     // wait should also be notified by wake_all
                     fut.store(3, Relaxed);
                     let timer = Instant::now();
-                    wait_timeout(&fut, 3, Duration::from_secs(1));
+                    wait_timeout(&fut, 3, Some(Duration::from_secs(1)));
                     let elapsed = timer.elapsed();
                     if elapsed < Duration::from_millis(10) {
                         panic!("{elapsed:?} exceeds threshold");
