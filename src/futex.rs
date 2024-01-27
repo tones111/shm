@@ -47,20 +47,25 @@ pub(crate) fn wait_timeout(a: &AtomicU32, expected: u32, timeout: Duration) -> b
             .and_then(|ts| add(ts, timeout))
     };
 
-    match (unsafe {
-        libc::syscall(
-            libc::SYS_futex,
-            a,
-            libc::FUTEX_WAIT,
-            expected,
-            ts.as_ref()
-                .map_or(core::ptr::null(), |ts| ts as *const libc::timespec),
-        )
-    } < 0)
-        .then_some(unsafe { *libc::__errno_location() })
-    {
-        Some(libc::ETIMEDOUT) => false,
-        _ => true,
+    loop {
+        match (unsafe {
+            libc::syscall(
+                libc::SYS_futex,
+                a,
+                libc::FUTEX_WAIT_BITSET,
+                expected,
+                ts.as_ref()
+                    .map_or(core::ptr::null::<libc::timespec>(), |ts| ts),
+                core::ptr::null::<u32>(),
+                libc::FUTEX_BITSET_MATCH_ANY,
+            )
+        } < 0)
+            .then(|| unsafe { *libc::__errno_location() })
+        {
+            Some(libc::ETIMEDOUT) => break false,
+            Some(libc::EINTR) => continue,
+            _ => break true,
+        }
     }
 }
 
@@ -128,6 +133,90 @@ mod tests {
                     fut.store(3, Relaxed);
                     let timer = Instant::now();
                     wait(&fut, 3);
+                    let elapsed = timer.elapsed();
+                    if elapsed < Duration::from_millis(10) {
+                        panic!("{elapsed:?} exceeds threshold");
+                    }
+                    fut.store(4, Relaxed);
+                }
+            }
+        });
+
+        let timer = Instant::now();
+        loop {
+            match fut.load(Relaxed) {
+                1 => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    wake_one(&fut);
+                }
+                3 => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    wake_all(&fut);
+                }
+                _ => {}
+            }
+
+            if handle.is_finished() {
+                assert!(handle.join().is_ok());
+                break;
+            }
+
+            assert!(
+                timer.elapsed() < Duration::from_secs(1),
+                "test timeout ({})",
+                fut.load(Relaxed)
+            );
+
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn futex_timeout() {
+        let fut = Arc::new(AtomicU32::new(0));
+
+        let handle = std::thread::spawn({
+            let fut = fut.clone();
+            move || {
+                // TODO: what about spurious wakeups?
+                {
+                    // wait_timeout shouldn't block when the expected value differs
+                    let timer = Instant::now();
+                    wait_timeout(&fut, 1, Duration::from_secs(1));
+                    let elapsed = timer.elapsed();
+                    if elapsed > Duration::from_millis(5) {
+                        panic!("{elapsed:?} exceeds threshold");
+                    }
+                }
+
+                {
+                    // wait_timeout should block when the expected value is the same
+                    fut.store(1, Relaxed);
+                    let timer = Instant::now();
+                    wait_timeout(&fut, 1, Duration::from_secs(1));
+                    let elapsed = timer.elapsed();
+                    if elapsed < Duration::from_millis(10) {
+                        panic!("{elapsed:?} exceeds threshold");
+                    }
+                    fut.store(2, Relaxed);
+                }
+
+                {
+                    // wait_timeout should return once the timeout expires
+                    const TIMEOUT: Duration = Duration::from_millis(10);
+                    let timer = Instant::now();
+                    wait_timeout(&fut, 2, TIMEOUT);
+                    let elapsed = timer.elapsed();
+                    if elapsed < TIMEOUT {
+                        panic!("{elapsed:?} exceeds threshold");
+                    }
+                }
+
+                {
+                    // wait should also be notified by wake_all
+                    fut.store(3, Relaxed);
+                    let timer = Instant::now();
+                    wait_timeout(&fut, 3, Duration::from_secs(1));
                     let elapsed = timer.elapsed();
                     if elapsed < Duration::from_millis(10) {
                         panic!("{elapsed:?} exceeds threshold");
