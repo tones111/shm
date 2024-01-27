@@ -79,3 +79,90 @@ pub(crate) fn wake_all(a: &AtomicU32) {
         libc::syscall(libc::SYS_futex, a, libc::FUTEX_WAKE, i32::MAX);
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::{
+            sync::{
+                atomic::{AtomicU32, Ordering::Relaxed},
+                Arc,
+            },
+            time::{Duration, Instant},
+        },
+    };
+
+    #[test]
+    fn futex() {
+        let fut = Arc::new(AtomicU32::new(0));
+
+        let handle = std::thread::spawn({
+            let fut = fut.clone();
+            move || {
+                // TODO: what about spurious wakeups?
+                {
+                    // wait shouldn't block when the expected value differs
+                    let timer = Instant::now();
+                    wait(&fut, 1);
+                    let elapsed = timer.elapsed();
+                    if elapsed > Duration::from_millis(5) {
+                        panic!("{elapsed:?} exceeds threshold");
+                    }
+                }
+
+                {
+                    // wait should block when the expected value is the same
+                    fut.store(1, Relaxed);
+                    let timer = Instant::now();
+                    wait(&fut, 1);
+                    let elapsed = timer.elapsed();
+                    if elapsed < Duration::from_millis(10) {
+                        panic!("{elapsed:?} exceeds threshold");
+                    }
+                    fut.store(2, Relaxed);
+                }
+
+                {
+                    // wait should also be notified by wake_all
+                    fut.store(3, Relaxed);
+                    let timer = Instant::now();
+                    wait(&fut, 3);
+                    let elapsed = timer.elapsed();
+                    if elapsed < Duration::from_millis(10) {
+                        panic!("{elapsed:?} exceeds threshold");
+                    }
+                    fut.store(4, Relaxed);
+                }
+            }
+        });
+
+        let timer = Instant::now();
+        loop {
+            match fut.load(Relaxed) {
+                1 => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    wake_one(&fut);
+                }
+                3 => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    wake_all(&fut);
+                }
+                _ => {}
+            }
+
+            if handle.is_finished() {
+                assert!(handle.join().is_ok());
+                break;
+            }
+
+            assert!(
+                timer.elapsed() < Duration::from_secs(1),
+                "test timeout ({})",
+                fut.load(Relaxed)
+            );
+
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
