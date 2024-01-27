@@ -1,6 +1,8 @@
+#[cfg(target_os = "linux")]
+mod futex;
+
 mod condvar;
 pub use condvar::Condvar;
-mod futex;
 mod mutex;
 pub use mutex::Mutex;
 mod rwlock;

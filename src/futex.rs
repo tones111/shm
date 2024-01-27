@@ -6,13 +6,11 @@ use core::{mem::MaybeUninit, sync::atomic::AtomicU32, time::Duration};
 // Futex documentation reference:
 // https://man7.org/linux/man-pages/man2/futex.2.html
 
-#[cfg(target_os = "linux")]
 #[inline]
 pub(crate) fn wait(a: &AtomicU32, expected: u32) {
     wait_timeout(a, expected, None);
 }
 
-#[cfg(target_os = "linux")]
 // Returns false if wait timed out
 pub(crate) fn wait_timeout(a: &AtomicU32, expected: u32, timeout: Option<Duration>) -> bool {
     let ts = {
@@ -67,7 +65,6 @@ pub(crate) fn wait_timeout(a: &AtomicU32, expected: u32, timeout: Option<Duratio
     }
 }
 
-#[cfg(target_os = "linux")]
 #[inline]
 pub(crate) fn wake_one(a: &AtomicU32) {
     unsafe {
@@ -75,7 +72,6 @@ pub(crate) fn wake_one(a: &AtomicU32) {
     };
 }
 
-#[cfg(target_os = "linux")]
 #[inline]
 pub(crate) fn wake_all(a: &AtomicU32) {
     unsafe {
