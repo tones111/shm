@@ -5,22 +5,13 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
 };
 
-#[derive(Debug)]
-pub(crate) enum Error {
-    InvalidLen,
-    UnknownLen(std::io::Error),
-    Open(std::io::Error),
-    Truncate(std::io::Error),
-    Mmap(std::io::Error),
-}
+pub fn create(name: &CStr, len: NonZeroUsize) -> Result<OwnedShm, crate::Error> {
+    let trunc_len = i64::try_from(len.get()).map_err(crate::Error::InvalidLen)?;
 
-pub fn create(name: &CStr, len: NonZeroUsize) -> Result<OwnedShm, Error> {
-    let trunc_len = i64::try_from(len.get()).map_err(|_| Error::InvalidLen)?;
-
-    let shm_fd = ShmFd::create(name).map_err(Error::Open)?;
+    let shm_fd = ShmFd::create(name).map_err(crate::Error::Open)?;
 
     if unsafe { libc::ftruncate(shm_fd.fd.as_raw_fd(), trunc_len) } != 0 {
-        Err(Error::Truncate(std::io::Error::last_os_error()))?
+        Err(crate::Error::Truncate(std::io::Error::last_os_error()))?
     }
 
     match unsafe {
@@ -34,7 +25,7 @@ pub fn create(name: &CStr, len: NonZeroUsize) -> Result<OwnedShm, Error> {
         )
     } {
         ptr if ptr == libc::MAP_FAILED || ptr.is_null() => {
-            Err(Error::Mmap(std::io::Error::last_os_error()))?
+            Err(crate::Error::Mmap(std::io::Error::last_os_error()))?
         }
         ptr => Ok(OwnedShm {
             _fd: shm_fd,
@@ -46,22 +37,22 @@ pub fn create(name: &CStr, len: NonZeroUsize) -> Result<OwnedShm, Error> {
     }
 }
 
-pub fn open(name: &CStr) -> Result<OpenShm, Error> {
+pub fn open(name: &CStr) -> Result<OpenShm, crate::Error> {
     let fd =
         match unsafe { libc::shm_open(name.as_ptr(), libc::O_RDWR, libc::S_IRUSR | libc::S_IWUSR) }
         {
             fd if fd >= 0 => unsafe { OwnedFd::from_raw_fd(fd) },
-            _ => Err(Error::Open(std::io::Error::last_os_error()))?,
+            _ => Err(crate::Error::Open(std::io::Error::last_os_error()))?,
         };
 
     let len = usize::try_from({
         let mut stat = MaybeUninit::<libc::stat>::uninit();
         match unsafe { libc::fstat(fd.as_raw_fd(), stat.as_mut_ptr()) } {
             0 => unsafe { stat.assume_init() }.st_size,
-            _ => Err(Error::UnknownLen(std::io::Error::last_os_error()))?,
+            _ => Err(crate::Error::UnknownLen(std::io::Error::last_os_error()))?,
         }
     })
-    .map_err(|_| Error::InvalidLen)?;
+    .map_err(crate::Error::InvalidLen)?;
 
     match unsafe {
         libc::mmap(
@@ -74,7 +65,7 @@ pub fn open(name: &CStr) -> Result<OpenShm, Error> {
         )
     } {
         ptr if ptr == libc::MAP_FAILED || ptr.is_null() => {
-            Err(Error::Mmap(std::io::Error::last_os_error()))?
+            Err(crate::Error::Mmap(std::io::Error::last_os_error()))?
         }
         ptr => Ok(OpenShm { ptr, len }),
     }

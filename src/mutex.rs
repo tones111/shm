@@ -74,7 +74,7 @@ impl<T: core::fmt::Debug> core::fmt::Debug for Mutex<T> {
 
 impl<T> Mutex<T> {
     #[inline]
-    const fn new(value: T) -> Self {
+    pub const fn new(value: T) -> Self {
         Self {
             state: AtomicU32::new(0),
             data: UnsafeCell::new(value),

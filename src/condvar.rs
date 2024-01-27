@@ -29,7 +29,7 @@ impl Default for Condvar {
 }
 
 impl Condvar {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             counter: AtomicU32::new(0),
             num_waiters: AtomicUsize::new(0),

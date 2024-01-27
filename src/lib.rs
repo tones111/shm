@@ -9,6 +9,46 @@ mod shm;
 
 use std::{ffi::CStr, num::NonZeroUsize, ops::Deref};
 
+#[derive(Debug)]
+pub enum Error {
+    AlignmentMismatch,
+    LengthMismatch,
+    InvalidLen(std::num::TryFromIntError),
+    UnknownLen(std::io::Error),
+    Open(std::io::Error),
+    Truncate(std::io::Error),
+    Mmap(std::io::Error),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::AlignmentMismatch => {
+                write!(f, "shared memory region doesn't support object alignment")
+            }
+            Error::LengthMismatch => write!(f, "object length differs from shared memory region"),
+            Error::InvalidLen(_) => write!(f, "object length not supported"),
+            Error::UnknownLen(_) => write!(f, "unable to discover object length"),
+            Error::Open(_) => write!(f, "unable to open shared memory region"),
+            Error::Truncate(_) => write!(f, "unable to resize shared memory region"),
+            Error::Mmap(_) => write!(f, "unable to shared object"),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::AlignmentMismatch | Error::LengthMismatch => None,
+            Error::InvalidLen(e) => Some(e),
+            Error::UnknownLen(e) => Some(e),
+            Error::Open(e) => Some(e),
+            Error::Truncate(e) => Some(e),
+            Error::Mmap(e) => Some(e),
+        }
+    }
+}
+
 /// # Safety
 ///
 /// This trait must only be implemented for pointer-free (transitively) types (cannot use the heap).
@@ -86,21 +126,24 @@ impl<T: Shareable> Shared<T> {
     /// let s = unsafe{Shared::<S>::create(&shm_name)};
     /// ```
 
-    // TODO: error handling
     /// # Safety
     ///
     /// In order to prevent a data race (UB) the caller must not share the name of the shared memory region
     /// until after this method has succesfully returned.
-    pub unsafe fn create(name: &CStr) -> Result<Self, ()> {
+    pub unsafe fn create(name: &CStr) -> Result<Self, Error> {
         #[allow(clippy::let_unit_value)]
         let _ = SizeIsNonZeroI64::<T>::OK;
 
         // [SAFETY]: The size is verified at compile-time to be non-zero.
         let len = unsafe { NonZeroUsize::new_unchecked(std::mem::size_of::<T>()) };
-        let mut shm = shm::create(name, len).expect("unable to create shm");
+        let mut shm = shm::create(name, len)?;
 
-        if !(len.get() <= shm.shm.len && shm.shm.ptr.align_offset(std::mem::align_of::<T>()) == 0) {
-            todo!()
+        if len.get() != shm.shm.len {
+            return Err(Error::LengthMismatch);
+        }
+
+        if shm.shm.ptr.align_offset(std::mem::align_of::<T>()) != 0 {
+            return Err(Error::AlignmentMismatch);
         }
 
         let handle = shm.shm.ptr.cast::<T>();
@@ -123,16 +166,18 @@ impl<T: Shareable> Shared<T> {
     /// The type T must match that used to create the Shared<T> instance with the same name.
     /// In order to prevent a data race (UB) this method must not be called until
     /// after the named shared memory region has been successfully created.
-    pub unsafe fn open(name: &CStr) -> Result<Self, ()> {
+    pub unsafe fn open(name: &CStr) -> Result<Self, Error> {
         #[allow(clippy::let_unit_value)]
         let _ = SizeIsNonZeroI64::<T>::OK;
 
-        let shm = shm::open(name).expect("unable to open shm");
+        let shm = shm::open(name)?;
 
-        if !(std::mem::size_of::<T>() <= shm.len
-            && shm.ptr.align_offset(std::mem::align_of::<T>()) == 0)
-        {
-            todo!()
+        if std::mem::size_of::<T>() != shm.len {
+            return Err(Error::LengthMismatch);
+        }
+
+        if shm.ptr.align_offset(std::mem::align_of::<T>()) != 0 {
+            return Err(Error::AlignmentMismatch);
         }
 
         // [SAFETY]: std::ptr::write requires the following conditions:
