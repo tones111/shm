@@ -72,6 +72,19 @@ impl<T: core::fmt::Debug> core::fmt::Debug for Mutex<T> {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<T> serde::Serialize for Mutex<T>
+where
+    T: serde::Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.lock().serialize(serializer)
+    }
+}
+
 impl<T> Mutex<T> {
     #[inline]
     pub const fn new(value: T) -> Self {

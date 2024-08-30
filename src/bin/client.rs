@@ -1,9 +1,16 @@
-use {shm::Mutex, std::ffi::CString, std::ops::Deref};
+use {
+    shm::{Mutex, RwLock},
+    std::{
+        ffi::CString,
+        sync::atomic::{AtomicU64, Ordering},
+    },
+};
 
 #[derive(Default, Debug)]
 struct Data {
-    //a1: [AtomicU32; 10],
-    a1: [Mutex<u32>; 10],
+    a: [AtomicU64; 5],
+    m: [Mutex<u64>; 5],
+    rw: RwLock<u64>,
 }
 
 unsafe impl shm::Shareable for Data {}
@@ -13,12 +20,9 @@ fn main() {
 
     let data: shm::Shared<Data> = unsafe { shm::Shared::open(&shm_name).unwrap() };
 
-    println!("client: {:?}", data.deref());
-
     for _ in 0..1_000_000 {
-        for d in data.a1.iter() {
-            //d.fetch_add(1, Ordering::Relaxed);
-            *d.lock() += 1;
-        }
+        data.a[1].fetch_add(1, Ordering::Relaxed);
+        *data.m[1].lock() += 1;
+        *data.rw.write() += 1;
     }
 }

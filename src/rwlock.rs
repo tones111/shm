@@ -24,12 +24,58 @@ pub struct RwLock<T> {
 
 unsafe impl<T> Sync for RwLock<T> where T: Send + Sync {}
 
+impl<T: Default> Default for RwLock<T> {
+    fn default() -> Self {
+        RwLock::new(Default::default())
+    }
+}
+
+impl<T: core::fmt::Debug> core::fmt::Debug for RwLock<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut d = f.debug_struct("RwLock");
+        match self.try_read() {
+            Some(guard) => {
+                d.field("data", &&*guard);
+            }
+            None => {
+                d.field("data", &format_args!("<locked>"));
+            }
+        }
+        d.finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<T> serde::Serialize for RwLock<T>
+where
+    T: serde::Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.read().serialize(serializer)
+    }
+}
+
 impl<T> RwLock<T> {
     pub const fn new(value: T) -> Self {
         Self {
             state: AtomicU32::new(0),
             writer_wake_counter: AtomicU32::new(0),
             value: UnsafeCell::new(value),
+        }
+    }
+
+    pub fn try_read(&self) -> Option<ReadGuard<T>> {
+        let s = self.state.load(Relaxed);
+        if (s % 2 == 0) && (s < u32::MAX - 2) {
+            self.state
+                .compare_exchange_weak(s, s + 2, Acquire, Relaxed)
+                .ok()
+                .map(|_| ReadGuard { rwlock: self })
+        } else {
+            None
         }
     }
 
